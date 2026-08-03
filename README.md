@@ -13,9 +13,10 @@ npm install
 cp .env.example .env
 ```
 
-Fill in your Zotero API key, user ID, and optionally a collection name in
-`.env` (see comments in `.env.example`). Create a key at
+Fill in your Zotero API key and user ID in `.env` (see comments in
+`.env.example`). Create a key at
 [zotero.org/settings/keys](https://www.zotero.org/settings/keys).
+Collections are chosen in the app after connecting.
 
 ## Start
 
@@ -34,12 +35,13 @@ filled in, the app connects to Zotero on startup.
 - **Drag**: freely reposition nodes
 - **Monitor**: check again for new citing articles
 - **Export/Import**: save/share the map as a JSON file
+- **Zotero collection**: after connecting, pick a collection (or main
+  library) from the toolbar dropdown — used for DOI sync and new papers
 - **Add to Zotero**: creates the paper (title, authors, DOI, abstract)
-  as a `journalArticle` in your library — in the chosen collection if
-  configured
+  as a `journalArticle` in the selected collection
 
-Papers already in your library (matched by DOI) are marked in the graph
-with a green dashed ring.
+Papers already in the selected collection/library (matched by DOI) are
+marked in the graph with a green dashed ring.
 
 ## Production build
 
@@ -56,6 +58,6 @@ npm run preview
 - OpenAlex rate limits are generous; for the "polite pool" with higher
   limits you can optionally append `&mailto=you@email.com` to the fetch
   URLs in `src/App.jsx`.
-- Zotero library sync currently loads the latest 100 entries (or of the
-  chosen collection). For larger libraries, pagination (`start=` parameter)
-  would need to be added.
+- Zotero sync currently loads the latest 100 entries of the selected
+  collection (or main library). For larger libraries, pagination
+  (`start=` parameter) would need to be added.

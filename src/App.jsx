@@ -21,7 +21,6 @@ const ZOTERO_API = "https://api.zotero.org";
 // Values come from .env (see .env.example) — never hard-code your key here.
 const ENV_USER_ID = import.meta.env.VITE_ZOTERO_USER_ID || "";
 const ENV_API_KEY = import.meta.env.VITE_ZOTERO_API_KEY || "";
-const ENV_COLLECTION_NAME = import.meta.env.VITE_ZOTERO_COLLECTION_NAME || "";
 
 function splitName(fullName) {
   const parts = (fullName || "").trim().split(" ");
@@ -61,16 +60,16 @@ export default function App() {
   const [, setTick] = useState(0);
   const [savedMsg, setSavedMsg] = useState("");
 
-  // Zotero state — pre-filled from .env if present
+  // Zotero state — credentials pre-filled from .env if present
   const [showZoteroPanel, setShowZoteroPanel] = useState(false);
   const [zoteroUserId, setZoteroUserId] = useState(ENV_USER_ID);
   const [zoteroApiKey, setZoteroApiKey] = useState(ENV_API_KEY);
-  const [zoteroCollectionName, setZoteroCollectionName] = useState(ENV_COLLECTION_NAME);
+  const [zoteroCollections, setZoteroCollections] = useState([]);
+  const [selectedCollectionKey, setSelectedCollectionKey] = useState(""); // "" = main library
   const [zoteroConnected, setZoteroConnected] = useState(false);
   const [zoteroBusy, setZoteroBusy] = useState(false);
   const [zoteroMsg, setZoteroMsg] = useState("");
   const zoteroDoisRef = useRef(new Set());
-  const zoteroCollectionKeyRef = useRef(null);
   const [addingId, setAddingId] = useState(null);
 
   const svgRef = useRef(null);
@@ -94,7 +93,7 @@ export default function App() {
 
     // auto-connect to Zotero if credentials came from .env
     if (ENV_USER_ID && ENV_API_KEY) {
-      connectZotero(ENV_USER_ID, ENV_API_KEY, ENV_COLLECTION_NAME);
+      connectZotero(ENV_USER_ID, ENV_API_KEY);
     }
     return () => sim.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -247,10 +246,23 @@ export default function App() {
   }
 
   // ---------- Zotero ----------
-  async function connectZotero(userIdArg, apiKeyArg, collectionNameArg) {
+  async function syncDois(userId, apiKey, collectionKey) {
+    const itemsUrl = collectionKey
+      ? `${ZOTERO_API}/users/${userId}/collections/${collectionKey}/items?limit=100`
+      : `${ZOTERO_API}/users/${userId}/items/top?limit=100&sort=dateAdded&direction=desc`;
+    const res = await fetch(itemsUrl, { headers: { "Zotero-API-Key": apiKey } });
+    if (!res.ok) throw new Error("Failed to sync items");
+    const items = await res.json();
+    zoteroDoisRef.current = new Set(
+      items.map((it) => it.data && it.data.DOI).filter(Boolean).map((d) => d.toLowerCase())
+    );
+    setTick((t) => t + 1);
+    return items.length;
+  }
+
+  async function connectZotero(userIdArg, apiKeyArg) {
     const userId = (userIdArg ?? zoteroUserId).trim();
     const apiKey = (apiKeyArg ?? zoteroApiKey).trim();
-    const collectionName = (collectionNameArg ?? zoteroCollectionName).trim();
 
     if (!userId || !apiKey) {
       setZoteroMsg("Please enter User ID and API key.");
@@ -259,48 +271,48 @@ export default function App() {
     setZoteroBusy(true);
     setZoteroMsg("Connecting to Zotero…");
     try {
-      // resolve collection name -> key, if given
-      let collectionKey = null;
-      if (collectionName) {
-        const cr = await fetch(`${ZOTERO_API}/users/${userId}/collections?limit=200`, {
-          headers: { "Zotero-API-Key": apiKey },
-        });
-        const collections = await cr.json();
-        const match = collections.find(
-          (c) => c.data.name.toLowerCase() === collectionName.toLowerCase()
-        );
-        if (match) {
-          collectionKey = match.key;
-        } else {
-          setZoteroMsg(`Collection "${collectionName}" not found — new papers will go to the main library.`);
-        }
-      }
-      zoteroCollectionKeyRef.current = collectionKey;
+      const cr = await fetch(`${ZOTERO_API}/users/${userId}/collections?limit=200`, {
+        headers: { "Zotero-API-Key": apiKey },
+      });
+      if (!cr.ok) throw new Error("Connection failed");
+      const collections = await cr.json();
+      const list = (collections || [])
+        .map((c) => ({ key: c.key, name: c.data.name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setZoteroCollections(list);
 
-      // fetch items to sync existing DOIs (scoped to collection if resolved)
-      const itemsUrl = collectionKey
-        ? `${ZOTERO_API}/users/${userId}/collections/${collectionKey}/items?limit=100`
-        : `${ZOTERO_API}/users/${userId}/items/top?limit=100&sort=dateAdded&direction=desc`;
-      const res = await fetch(itemsUrl, { headers: { "Zotero-API-Key": apiKey } });
-      if (!res.ok) throw new Error("Connection failed");
-      const items = await res.json();
-      const dois = new Set(
-        items.map((it) => it.data && it.data.DOI).filter(Boolean).map((d) => d.toLowerCase())
-      );
-      zoteroDoisRef.current = dois;
+      const count = await syncDois(userId, apiKey, selectedCollectionKey);
       setZoteroUserId(userId);
       setZoteroApiKey(apiKey);
       setZoteroConnected(true);
-      setZoteroMsg(
-        `Connected${collectionKey ? ` — collection "${collectionName}"` : ""} — synced ${items.length} entries.`
-      );
-      setTick((t) => t + 1);
+      setZoteroMsg(`Connected — ${list.length} collections, synced ${count} entries.`);
     } catch (e) {
       setZoteroMsg("Connection failed. Check User ID and API key.");
       setZoteroConnected(false);
+      setZoteroCollections([]);
     } finally {
       setZoteroBusy(false);
       setTimeout(() => setZoteroMsg(""), 6000);
+    }
+  }
+
+  async function selectCollection(collectionKey) {
+    setSelectedCollectionKey(collectionKey);
+    if (!zoteroConnected) return;
+    setZoteroBusy(true);
+    const label =
+      collectionKey === ""
+        ? "main library"
+        : zoteroCollections.find((c) => c.key === collectionKey)?.name || "collection";
+    setZoteroMsg(`Syncing ${label}…`);
+    try {
+      const count = await syncDois(zoteroUserId.trim(), zoteroApiKey.trim(), collectionKey);
+      setZoteroMsg(`Using ${label} — synced ${count} entries.`);
+    } catch (e) {
+      setZoteroMsg("Failed to sync collection.");
+    } finally {
+      setZoteroBusy(false);
+      setTimeout(() => setZoteroMsg(""), 4000);
     }
   }
 
@@ -337,8 +349,8 @@ export default function App() {
           (full.primary_location && full.primary_location.source && full.primary_location.source.display_name) || "",
         abstractNote: reconstructAbstract(full.abstract_inverted_index) || "",
       };
-      if (zoteroCollectionKeyRef.current) {
-        item.collections = [zoteroCollectionKeyRef.current];
+      if (selectedCollectionKey) {
+        item.collections = [selectedCollectionKey];
       }
 
       const res = await fetch(`${ZOTERO_API}/users/${zoteroUserId.trim()}/items`, {
@@ -511,6 +523,28 @@ export default function App() {
           >
             <Library size={14} /> {zoteroConnected ? "Zotero connected" : "Zotero"}
           </button>
+          {zoteroConnected && (
+            <select
+              value={selectedCollectionKey}
+              onChange={(e) => selectCollection(e.target.value)}
+              disabled={zoteroBusy}
+              title="Zotero collection for sync and new papers"
+              style={{
+                ...inputStyle(),
+                width: "auto",
+                minWidth: 160,
+                maxWidth: 240,
+                cursor: zoteroBusy ? "wait" : "pointer",
+              }}
+            >
+              <option value="">Main library</option>
+              {zoteroCollections.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {showZoteroPanel && (
@@ -526,16 +560,15 @@ export default function App() {
             }}
           >
             <div style={{ color: "#7C8AA3", marginBottom: 8 }}>
-              Values come from your <code>.env</code>, but can be overridden here. Create a key at{" "}
+              Credentials come from your <code>.env</code>, but can be overridden here. Create a key at{" "}
               <a href="https://www.zotero.org/settings/keys" target="_blank" rel="noreferrer" style={{ color: "#4FD1C5" }}>
                 zotero.org/settings/keys
               </a>
-              .
+              . Choose a collection in the toolbar after connecting.
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <input value={zoteroUserId} onChange={(e) => setZoteroUserId(e.target.value)} placeholder="User ID" style={{ ...inputStyle(), width: 140 }} />
               <input value={zoteroApiKey} onChange={(e) => setZoteroApiKey(e.target.value)} placeholder="API key" type="password" style={{ ...inputStyle(), width: 160 }} />
-              <input value={zoteroCollectionName} onChange={(e) => setZoteroCollectionName(e.target.value)} placeholder="Collection (optional)" style={{ ...inputStyle(), width: 160 }} />
               <button onClick={() => connectZotero()} style={btnStyle()}>
                 {zoteroBusy ? <Loader2 size={14} className="spin" /> : "Connect"}
               </button>
