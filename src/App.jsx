@@ -25,7 +25,7 @@ const ENV_COLLECTION_NAME = import.meta.env.VITE_ZOTERO_COLLECTION_NAME || "";
 
 function splitName(fullName) {
   const parts = (fullName || "").trim().split(" ");
-  if (parts.length === 1) return { creatorType: "author", name: parts[0] || "Unbekannt" };
+  if (parts.length === 1) return { creatorType: "author", name: parts[0] || "Unknown" };
   return {
     creatorType: "author",
     firstName: parts.slice(0, -1).join(" "),
@@ -114,11 +114,11 @@ export default function App() {
     setError(null);
     try {
       const res = await fetch(`${API}?search=${encodeURIComponent(q)}&per_page=8`);
-      if (!res.ok) throw new Error("Suche fehlgeschlagen");
+      if (!res.ok) throw new Error("Search failed");
       const data = await res.json();
       setSearchResults(data.results || []);
     } catch (e) {
-      setError("Suche fehlgeschlagen. Bitte erneut versuchen.");
+      setError("Search failed. Please try again.");
     } finally {
       setSearching(false);
     }
@@ -130,7 +130,7 @@ export default function App() {
     if (!n) {
       n = {
         id,
-        label: work.display_name || "Ohne Titel",
+        label: work.display_name || "Untitled",
         year: work.publication_year,
         cited_by_count: work.cited_by_count || 0,
         referenced_works: work.referenced_works || [],
@@ -155,7 +155,7 @@ export default function App() {
   }
 
   async function loadSeed(work) {
-    setLoadingMsg("Lade Zitationsnetzwerk…");
+    setLoadingMsg("Loading citation network…");
     setError(null);
     setSearchResults([]);
     setQuery("");
@@ -183,14 +183,14 @@ export default function App() {
       }
       restart(1);
     } catch (e) {
-      setError("Netzwerk konnte nicht geladen werden.");
+      setError("Could not load network.");
     } finally {
       setLoadingMsg(null);
     }
   }
 
   async function expandNode(n) {
-    setLoadingMsg(`Erweitere „${n.label.slice(0, 40)}…"`);
+    setLoadingMsg(`Expanding "${n.label.slice(0, 40)}…"`);
     try {
       const full = await (await fetch(`${API}/${n.id}`)).json();
       const refIds = (full.referenced_works || []).slice(0, 12).map(shortId);
@@ -212,7 +212,7 @@ export default function App() {
       }
       restart(0.7);
     } catch (e) {
-      setError("Erweiterung fehlgeschlagen.");
+      setError("Expansion failed.");
     } finally {
       setLoadingMsg(null);
     }
@@ -221,7 +221,7 @@ export default function App() {
   async function checkForUpdates() {
     const seed = nodesRef.current.find((n) => n.kind === "seed");
     if (!seed) return;
-    setLoadingMsg("Prüfe auf neue zitierende Artikel…");
+    setLoadingMsg("Checking for new citing articles…");
     try {
       const full = await (await fetch(`${API}/${seed.id}`)).json();
       if (full.cited_by_api_url) {
@@ -236,10 +236,10 @@ export default function App() {
           if (!existed) added++;
         });
         restart(0.6);
-        setSavedMsg(added > 0 ? `${added} neue zitierende Artikel gefunden.` : "Keine neuen Artikel seit letzter Prüfung.");
+        setSavedMsg(added > 0 ? `Found ${added} new citing article(s).` : "No new articles since last check.");
       }
     } catch (e) {
-      setError("Prüfung fehlgeschlagen.");
+      setError("Check failed.");
     } finally {
       setLoadingMsg(null);
       setTimeout(() => setSavedMsg(""), 4000);
@@ -253,11 +253,11 @@ export default function App() {
     const collectionName = (collectionNameArg ?? zoteroCollectionName).trim();
 
     if (!userId || !apiKey) {
-      setZoteroMsg("Bitte User-ID und API-Key eingeben.");
+      setZoteroMsg("Please enter User ID and API key.");
       return;
     }
     setZoteroBusy(true);
-    setZoteroMsg("Verbinde mit Zotero…");
+    setZoteroMsg("Connecting to Zotero…");
     try {
       // resolve collection name -> key, if given
       let collectionKey = null;
@@ -272,7 +272,7 @@ export default function App() {
         if (match) {
           collectionKey = match.key;
         } else {
-          setZoteroMsg(`Sammlung "${collectionName}" nicht gefunden — neue Paper gehen in die Hauptbibliothek.`);
+          setZoteroMsg(`Collection "${collectionName}" not found — new papers will go to the main library.`);
         }
       }
       zoteroCollectionKeyRef.current = collectionKey;
@@ -282,7 +282,7 @@ export default function App() {
         ? `${ZOTERO_API}/users/${userId}/collections/${collectionKey}/items?limit=100`
         : `${ZOTERO_API}/users/${userId}/items/top?limit=100&sort=dateAdded&direction=desc`;
       const res = await fetch(itemsUrl, { headers: { "Zotero-API-Key": apiKey } });
-      if (!res.ok) throw new Error("Verbindung fehlgeschlagen");
+      if (!res.ok) throw new Error("Connection failed");
       const items = await res.json();
       const dois = new Set(
         items.map((it) => it.data && it.data.DOI).filter(Boolean).map((d) => d.toLowerCase())
@@ -292,11 +292,11 @@ export default function App() {
       setZoteroApiKey(apiKey);
       setZoteroConnected(true);
       setZoteroMsg(
-        `Verbunden${collectionKey ? ` — Sammlung "${collectionName}"` : ""} — ${items.length} Einträge abgeglichen.`
+        `Connected${collectionKey ? ` — collection "${collectionName}"` : ""} — synced ${items.length} entries.`
       );
       setTick((t) => t + 1);
     } catch (e) {
-      setZoteroMsg("Verbindung fehlgeschlagen. User-ID und API-Key prüfen.");
+      setZoteroMsg("Connection failed. Check User ID and API key.");
       setZoteroConnected(false);
     } finally {
       setZoteroBusy(false);
@@ -307,7 +307,7 @@ export default function App() {
   async function addToZotero(node) {
     if (!zoteroConnected) {
       setShowZoteroPanel(true);
-      setZoteroMsg("Erst mit Zotero verbinden, dann hinzufügen.");
+      setZoteroMsg("Connect to Zotero first, then add.");
       return;
     }
     setAddingId(node.id);
@@ -352,14 +352,14 @@ export default function App() {
       const result = await res.json();
       if (result.successful && Object.keys(result.successful).length > 0) {
         if (full.doi) zoteroDoisRef.current.add(full.doi.toLowerCase());
-        setZoteroMsg(`„${full.label.slice(0, 40)}…" zu Zotero hinzugefügt.`);
+        setZoteroMsg(`Added "${full.label.slice(0, 40)}…" to Zotero.`);
         setTick((t) => t + 1);
       } else {
-        setZoteroMsg("Zotero hat das Paper abgelehnt (siehe Konsole).");
+        setZoteroMsg("Zotero rejected the paper (see console).");
         console.warn(result);
       }
     } catch (e) {
-      setZoteroMsg("Hinzufügen fehlgeschlagen.");
+      setZoteroMsg("Failed to add.");
     } finally {
       setAddingId(null);
       setTimeout(() => setZoteroMsg(""), 5000);
@@ -393,7 +393,7 @@ export default function App() {
     a.download = `litmap-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    setSavedMsg("Karte als JSON-Datei exportiert.");
+    setSavedMsg("Map exported as JSON file.");
     setTimeout(() => setSavedMsg(""), 4000);
   }
 
@@ -412,9 +412,9 @@ export default function App() {
         linksRef.current = data.links;
         restart(1);
         setSelected(nodesRef.current.find((n) => n.kind === "seed") || null);
-        setSavedMsg("Karte importiert.");
+        setSavedMsg("Map imported.");
       } catch (err) {
-        setError("Ungültige Karten-Datei.");
+        setError("Invalid map file.");
       }
       setTimeout(() => setSavedMsg(""), 4000);
     };
@@ -463,7 +463,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
           <span style={{ fontSize: 22, letterSpacing: 0.5 }}>Citation Explorer</span>
           <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#7C8AA3" }}>
-            OpenAlex + Zotero — lokal &amp; kostenlos
+            OpenAlex + Zotero — local &amp; free
           </span>
         </div>
 
@@ -474,7 +474,7 @@ export default function App() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && doSearch(query)}
-              placeholder="Seed-Artikel suchen (Titel oder Stichwort)…"
+              placeholder="Search for a seed article (title or keyword)…"
               style={{
                 width: "100%",
                 background: "#121B2E",
@@ -489,15 +489,15 @@ export default function App() {
             />
           </div>
           <button onClick={() => doSearch(query)} style={btnStyle()}>
-            {searching ? <Loader2 size={14} className="spin" /> : "Suchen"}
+            {searching ? <Loader2 size={14} className="spin" /> : "Search"}
           </button>
-          <button onClick={checkForUpdates} style={btnStyle()} title="Nach neuen zitierenden Artikeln prüfen">
+          <button onClick={checkForUpdates} style={btnStyle()} title="Check for new citing articles">
             <RefreshCw size={14} /> Monitor
           </button>
-          <button onClick={exportMap} style={btnStyle()} title="Karte als JSON exportieren">
+          <button onClick={exportMap} style={btnStyle()} title="Export map as JSON">
             <Download size={14} /> Export
           </button>
-          <button onClick={() => fileInputRef.current.click()} style={btnStyle()} title="Karte aus JSON importieren">
+          <button onClick={() => fileInputRef.current.click()} style={btnStyle()} title="Import map from JSON">
             <Upload size={14} /> Import
           </button>
           <input ref={fileInputRef} type="file" accept="application/json" onChange={importMap} style={{ display: "none" }} />
@@ -509,7 +509,7 @@ export default function App() {
               borderColor: zoteroConnected ? "#2f5a45" : "#2c3b5a",
             }}
           >
-            <Library size={14} /> {zoteroConnected ? "Zotero verbunden" : "Zotero"}
+            <Library size={14} /> {zoteroConnected ? "Zotero connected" : "Zotero"}
           </button>
         </div>
 
@@ -526,18 +526,18 @@ export default function App() {
             }}
           >
             <div style={{ color: "#7C8AA3", marginBottom: 8 }}>
-              Werte kommen aus deiner <code>.env</code>, können hier aber überschrieben werden. Key erstellen unter{" "}
+              Values come from your <code>.env</code>, but can be overridden here. Create a key at{" "}
               <a href="https://www.zotero.org/settings/keys" target="_blank" rel="noreferrer" style={{ color: "#4FD1C5" }}>
                 zotero.org/settings/keys
               </a>
               .
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <input value={zoteroUserId} onChange={(e) => setZoteroUserId(e.target.value)} placeholder="User-ID" style={{ ...inputStyle(), width: 140 }} />
-              <input value={zoteroApiKey} onChange={(e) => setZoteroApiKey(e.target.value)} placeholder="API-Key" type="password" style={{ ...inputStyle(), width: 160 }} />
-              <input value={zoteroCollectionName} onChange={(e) => setZoteroCollectionName(e.target.value)} placeholder="Sammlung (optional)" style={{ ...inputStyle(), width: 160 }} />
+              <input value={zoteroUserId} onChange={(e) => setZoteroUserId(e.target.value)} placeholder="User ID" style={{ ...inputStyle(), width: 140 }} />
+              <input value={zoteroApiKey} onChange={(e) => setZoteroApiKey(e.target.value)} placeholder="API key" type="password" style={{ ...inputStyle(), width: 160 }} />
+              <input value={zoteroCollectionName} onChange={(e) => setZoteroCollectionName(e.target.value)} placeholder="Collection (optional)" style={{ ...inputStyle(), width: 160 }} />
               <button onClick={() => connectZotero()} style={btnStyle()}>
-                {zoteroBusy ? <Loader2 size={14} className="spin" /> : "Verbinden"}
+                {zoteroBusy ? <Loader2 size={14} className="spin" /> : "Connect"}
               </button>
             </div>
           </div>
@@ -555,7 +555,7 @@ export default function App() {
               >
                 <div style={{ color: "#E8E6DE" }}>{w.display_name}</div>
                 <div style={{ color: "#7C8AA3", fontSize: 11, marginTop: 2 }}>
-                  {w.publication_year} · {w.cited_by_count} Zitationen
+                  {w.publication_year} · {w.cited_by_count} citations
                 </div>
               </div>
             ))}
@@ -607,33 +607,33 @@ export default function App() {
           {!selected && nodesRef.current.length === 0 && (
             <div style={{ color: "#7C8AA3", lineHeight: 1.6 }}>
               <BookOpen size={18} style={{ marginBottom: 8 }} />
-              <p>Suche oben nach einem Artikel, um dein erstes Zitationsnetzwerk zu erzeugen.</p>
-              <p style={{ marginTop: 10 }}>Klick = Details · Doppelklick = Knoten erweitern · Ziehen = verschieben</p>
+              <p>Search above for an article to generate your first citation network.</p>
+              <p style={{ marginTop: 10 }}>Click = details · Double-click = expand node · Drag = move</p>
             </div>
           )}
           {selected && (
             <div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ fontSize: 10, letterSpacing: 1, color: colorFor(selected.kind), textTransform: "uppercase" }}>
-                  {selected.kind === "seed" ? "Seed" : selected.kind === "citation" ? "Zitiert von" : "Referenz"}
+                  {selected.kind === "seed" ? "Seed" : selected.kind === "citation" ? "Cited by" : "Reference"}
                 </span>
                 <X size={14} style={{ cursor: "pointer", color: "#7C8AA3" }} onClick={() => setSelected(null)} />
               </div>
               <div style={{ marginTop: 6, fontFamily: "Georgia, serif", lineHeight: 1.4 }}>{selected.label}</div>
               <div style={{ marginTop: 8, color: "#7C8AA3", fontSize: 12 }}>
-                {selected.year} · {selected.cited_by_count} Zitationen
+                {selected.year} · {selected.cited_by_count} citations
               </div>
               <button onClick={() => expandNode(selected)} style={{ ...btnStyle(), marginTop: 14, width: "100%", justifyContent: "center" }}>
-                Netzwerk erweitern
+                Expand network
               </button>
 
               {selected.doi && zoteroDoisRef.current.has(selected.doi.toLowerCase()) ? (
                 <div style={{ ...btnStyle(), marginTop: 8, width: "100%", justifyContent: "center", background: "#1f3a30", borderColor: "#2f5a45", cursor: "default" }}>
-                  <Check size={14} /> Schon in Zotero
+                  <Check size={14} /> Already in Zotero
                 </div>
               ) : (
                 <button onClick={() => addToZotero(selected)} style={{ ...btnStyle(), marginTop: 8, width: "100%", justifyContent: "center" }}>
-                  {addingId === selected.id ? <Loader2 size={14} className="spin" /> : (<><Plus size={14} /> Zu Zotero hinzufügen</>)}
+                  {addingId === selected.id ? <Loader2 size={14} className="spin" /> : (<><Plus size={14} /> Add to Zotero</>)}
                 </button>
               )}
 
@@ -643,7 +643,7 @@ export default function App() {
                 rel="noreferrer"
                 style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, color: "#7C8AA3", fontSize: 12, textDecoration: "none" }}
               >
-                <ExternalLink size={12} /> Auf OpenAlex ansehen
+                <ExternalLink size={12} /> View on OpenAlex
               </a>
             </div>
           )}

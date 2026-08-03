@@ -1,61 +1,61 @@
 # Citation Explorer
 
-Ein kostenloses Literatur-Discovery-Tool im Stil von Litmaps: durchsucht
-[OpenAlex](https://openalex.org) nach Papers, visualisiert das Zitationsnetzwerk
-und verbindet sich mit deiner [Zotero](https://www.zotero.org)-Library.
+A free literature discovery tool in the style of Litmaps: searches
+[OpenAlex](https://openalex.org) for papers, visualizes the citation network,
+and connects to your [Zotero](https://www.zotero.org) library.
 
-## Einrichtung
+## Setup
 
 ```bash
-git clone <dein-repo-url>
+git clone <your-repo-url>
 cd citation-explorer
 npm install
 cp .env.example .env
 ```
 
-Trage in `.env` deinen Zotero-API-Key, deine User-ID und optional den Namen
-einer Sammlung ein (siehe Kommentare in `.env.example`). Key erstellen unter
+Fill in your Zotero API key, user ID, and optionally a collection name in
+`.env` (see comments in `.env.example`). Create a key at
 [zotero.org/settings/keys](https://www.zotero.org/settings/keys).
 
-## Starten
+## Start
 
 ```bash
 npm run dev
 ```
 
-Öffnet automatisch `http://localhost:5173` im Browser. Falls die `.env`
-ausgefüllt ist, verbindet sich die App beim Start automatisch mit Zotero.
+Opens `http://localhost:5173` in the browser automatically. If `.env` is
+filled in, the app connects to Zotero on startup.
 
-## Bedienung
+## Usage
 
-- **Suchen**: Titel/Stichwort eingeben → Enter oder "Suchen"
-- **Klick** auf einen Knoten: Details in der Sidebar
-- **Doppelklick**: Netzwerk um diesen Knoten erweitern
-- **Ziehen**: Knoten frei positionieren
-- **Monitor**: erneut auf neue zitierende Artikel prüfen
-- **Export/Import**: Karte als JSON-Datei sichern/teilen
-- **Zu Zotero hinzufügen**: legt das Paper (Titel, Autoren, DOI, Abstract)
-  als `journalArticle` in deiner Library an — in der gewählten Sammlung,
-  falls konfiguriert
+- **Search**: Enter a title/keyword → Enter or "Search"
+- **Click** a node: details in the sidebar
+- **Double-click**: expand the network around that node
+- **Drag**: freely reposition nodes
+- **Monitor**: check again for new citing articles
+- **Export/Import**: save/share the map as a JSON file
+- **Add to Zotero**: creates the paper (title, authors, DOI, abstract)
+  as a `journalArticle` in your library — in the chosen collection if
+  configured
 
-Paper, die bereits in deiner Library sind (per DOI-Abgleich erkannt), werden
-im Graph mit einem grün gestrichelten Ring markiert.
+Papers already in your library (matched by DOI) are marked in the graph
+with a green dashed ring.
 
-## Build für Produktion
+## Production build
 
 ```bash
 npm run build
 npm run preview
 ```
 
-## Hinweise
+## Notes
 
-- Alle Zugangsdaten bleiben lokal in `.env` (per `.gitignore` vom Commit
-  ausgeschlossen) bzw. im Speicher des Browser-Tabs — nichts wird an
-  Drittserver übertragen außer OpenAlex und Zotero selbst.
-- OpenAlex-Rate-Limits sind großzügig; für den "polite pool" mit höheren
-  Limits kannst du optional `&mailto=deine@email.de` an die Fetch-URLs in
-  `src/App.jsx` anhängen.
-- Zotero-Bibliotheksabgleich lädt aktuell die letzten 100 Einträge
-  (bzw. der gewählten Sammlung). Für größere Bibliotheken müsste die
-  Pagination (`start=`-Parameter) ergänzt werden.
+- All credentials stay local in `.env` (excluded from git via `.gitignore`)
+  or in the browser tab's memory — nothing is sent to third-party servers
+  except OpenAlex and Zotero themselves.
+- OpenAlex rate limits are generous; for the "polite pool" with higher
+  limits you can optionally append `&mailto=you@email.com` to the fetch
+  URLs in `src/App.jsx`.
+- Zotero library sync currently loads the latest 100 entries (or of the
+  chosen collection). For larger libraries, pagination (`start=` parameter)
+  would need to be added.
