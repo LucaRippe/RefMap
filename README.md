@@ -1,14 +1,16 @@
-# Citation Explorer
+# RefMap - Free Citation Explorer
 
 A free literature discovery tool in the style of Litmaps: searches
 [OpenAlex](https://openalex.org) for papers, visualizes the citation network,
 and connects to your [Zotero](https://www.zotero.org) library.
 
+Powered by OpenAlex + Zotero.
+
 ## Setup
 
 ```bash
-git clone <your-repo-url>
-cd citation-explorer
+git clone https://github.com/LucaRippe/RefMap
+cd RefMap
 npm install
 cp .env.example .env
 ```
@@ -29,19 +31,29 @@ filled in, the app connects to Zotero on startup.
 
 ## Usage
 
-- **Search**: Enter a title/keyword → Enter or "Search"
+- **Search**: Enter a title/keyword → Enter or "Search", then click a
+  result to highlight that paper on the current map (others dim)
 - **Click** a node: details in the sidebar
 - **Double-click**: expand the network around that node
 - **Drag**: freely reposition nodes
 - **Monitor**: check again for new citing articles
-- **Export/Import**: save/share the map as a JSON file
 - **Zotero collection**: after connecting, pick a collection (or main
   library) from the toolbar dropdown — used for DOI sync and new papers
+- **Create Map**: builds a scatter map of the selected collection
+  (X = publication year, Y = total citations). **Red** nodes are papers
+  already in the collection; **green** discovery nodes are outside papers
+  that cite or are cited by the collection. Node size reflects network
+  degree on the map. White arrows show citation direction. Discovery can
+  be toggled in the view controls. Papers without a DOI / OpenAlex match
+  are skipped.
+- **Zoom / view**: scroll to zoom, drag the background to pan; use the
+  controls for zoom in/out, fit, reset, toggle links/labels, and log-scale Y.
+  Selecting a paper loads its abstract in the sidebar.
 - **Add to Zotero**: creates the paper (title, authors, DOI, abstract)
   as a `journalArticle` in the selected collection
 
-Papers already in the selected collection/library (matched by DOI) are
-marked in the graph with a green dashed ring.
+In explore mode, papers already in the selected collection/library
+(matched by DOI) are marked with a green dashed ring.
 
 ## Production build
 
