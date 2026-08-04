@@ -10,6 +10,8 @@ import {
   Library,
   Check,
   Plus,
+  Download,
+  Upload,
   Map as MapIcon,
   ZoomIn,
   ZoomOut,
@@ -17,6 +19,7 @@ import {
   Eye,
   EyeOff,
   Tag,
+  List,
 } from "lucide-react";
 
 const API = "https://api.openalex.org/works";
@@ -75,12 +78,47 @@ function nodeRadius(n) {
   return Math.max(7, Math.min(26, 7 + Math.sqrt(c) * 1.4));
 }
 
+const DEFAULT_NODE_COLOR = "#E8E6DE";
+const TAG_PALETTE = ["#E05353", "#4FD1C5", "#C9A227", "#7C9CFF", "#E07856", "#B57EDC", "#3DCF7A", "#F0A0C0", "#5B8DEF", "#D4A574"];
+
+function loadStoredTags() {
+  try {
+    const raw = localStorage.getItem("refmap-tags");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadStoredPaperTags() {
+  try {
+    const raw = localStorage.getItem("refmap-paper-tags");
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
 function colorFor(kind) {
-  if (kind === "collection") return "#E05353";
-  if (kind === "discovery") return "#3DCF7A";
+  if (kind === "collection") return DEFAULT_NODE_COLOR;
+  if (kind === "discovery") return DEFAULT_NODE_COLOR;
   if (kind === "seed") return "#C9A227";
   if (kind === "citation") return "#4FD1C5";
-  return "#E8E6DE";
+  return DEFAULT_NODE_COLOR;
+}
+
+/** Visual style for a map node: collection = filled, discovery = outline; tag overrides color. */
+function nodePaint(n, tags) {
+  const tag = n.tagId ? tags.find((t) => t.id === n.tagId) : null;
+  const color = tag ? tag.color : colorFor(n.kind);
+  const outline = n.kind === "discovery";
+  return {
+    // transparent (not "none") so the interior remains clickable
+    fill: outline ? "transparent" : color,
+    stroke: color,
+    color,
+    outline,
+  };
 }
 
 const MAX_DISCOVERY_NODES = 120;
@@ -136,6 +174,7 @@ function workToNode(w, kind) {
       ? reconstructAbstract(w.abstract_inverted_index)
       : undefined,
     kind,
+    tagId: null,
     internalDegree: 0,
     x: 0,
     y: 0,
@@ -217,6 +256,11 @@ export default function App() {
   const [, setTick] = useState(0);
   const [savedMsg, setSavedMsg] = useState("");
   const [mapMode, setMapMode] = useState("explore"); // "explore" | "collection"
+  const [viewMode, setViewMode] = useState("map"); // "map" | "list"
+  const [listScope, setListScope] = useState("all"); // "all" | "collection" | "discovery"
+  const [listTagFilter, setListTagFilter] = useState("all"); // "all" | "none" | tagId
+  const [listSort, setListSort] = useState("year-desc");
+  const [listQuery, setListQuery] = useState("");
   const [showLinks, setShowLinks] = useState(true);
   const [showLabels, setShowLabels] = useState(false);
   const [showDiscovery, setShowDiscovery] = useState(true);
@@ -225,6 +269,11 @@ export default function App() {
   const [highlightId, setHighlightId] = useState(null);
   const [viewTransform, setViewTransform] = useState(() => d3.zoomIdentity);
   const [abstractLoading, setAbstractLoading] = useState(false);
+  const [tags, setTags] = useState(loadStoredTags);
+  const [paperTags, setPaperTags] = useState(loadStoredPaperTags);
+  const [showTagsPanel, setShowTagsPanel] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const [newTagColor, setNewTagColor] = useState(TAG_PALETTE[0]);
 
   // Zotero state — credentials pre-filled from .env if present
   const [showZoteroPanel, setShowZoteroPanel] = useState(false);
@@ -239,6 +288,7 @@ export default function App() {
   const [addingId, setAddingId] = useState(null);
 
   const svgRef = useRef(null);
+  const fileInputRef = useRef(null);
   const dimsRef = useRef({ w: 900, h: defaultMapHeight() });
   const nodesRef = useRef([]);
   const linksRef = useRef([]);
@@ -249,6 +299,114 @@ export default function App() {
   const transformRef = useRef(d3.zoomIdentity);
   const logScaleRef = useRef(false);
   const resizingRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.setItem("refmap-tags", JSON.stringify(tags));
+  }, [tags]);
+
+  useEffect(() => {
+    localStorage.setItem("refmap-paper-tags", JSON.stringify(paperTags));
+  }, [paperTags]);
+
+  function applyPaperTagsToNodes() {
+    nodesRef.current.forEach((n) => {
+      n.tagId = paperTags[n.id] || null;
+    });
+    setTick((t) => t + 1);
+  }
+
+  useEffect(() => {
+    applyPaperTagsToNodes();
+    if (selected) {
+      const n = nodesRef.current.find((x) => x.id === selected.id);
+      if (n) setSelected({ ...n });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paperTags]);
+
+  function createTag() {
+    const name = newTagName.trim();
+    if (!name) return;
+    if (tags.some((t) => t.name.toLowerCase() === name.toLowerCase())) {
+      setSavedMsg("A tag with that name already exists.");
+      setTimeout(() => setSavedMsg(""), 3000);
+      return;
+    }
+    const tag = { id: `tag-${Date.now()}`, name, color: newTagColor };
+    setTags((prev) => [...prev, tag]);
+    setNewTagName("");
+    setNewTagColor(TAG_PALETTE[(tags.length + 1) % TAG_PALETTE.length]);
+  }
+
+  function deleteTag(tagId) {
+    setTags((prev) => prev.filter((t) => t.id !== tagId));
+    setPaperTags((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((paperId) => {
+        if (next[paperId] === tagId) delete next[paperId];
+      });
+      return next;
+    });
+  }
+
+  function assignTagToSelected(tagId) {
+    if (!selected) return;
+    const id = selected.id;
+    setPaperTags((prev) => {
+      const next = { ...prev };
+      if (!tagId) delete next[id];
+      else next[id] = tagId;
+      return next;
+    });
+    const node = nodesRef.current.find((n) => n.id === id);
+    if (node) {
+      node.tagId = tagId || null;
+      setSelected({ ...node });
+    }
+    setTick((t) => t + 1);
+  }
+
+  function getFilteredListNodes() {
+    let nodes = nodesRef.current.slice();
+    if (listScope === "collection") {
+      nodes = nodes.filter((n) => n.kind === "collection");
+    } else if (listScope === "discovery") {
+      nodes = nodes.filter((n) => n.kind === "discovery");
+    }
+    if (listTagFilter === "none") {
+      nodes = nodes.filter((n) => !n.tagId);
+    } else if (listTagFilter !== "all") {
+      nodes = nodes.filter((n) => n.tagId === listTagFilter);
+    }
+    const q = listQuery.trim().toLowerCase();
+    if (q) {
+      nodes = nodes.filter(
+        (n) =>
+          (n.label || "").toLowerCase().includes(q) ||
+          (n.doi || "").includes(q) ||
+          String(n.year || "").includes(q)
+      );
+    }
+    const mul = listSort.endsWith("-asc") ? 1 : -1;
+    const key = listSort.replace(/-asc|-desc$/, "");
+    nodes.sort((a, b) => {
+      if (key === "title") return mul * (a.label || "").localeCompare(b.label || "");
+      if (key === "citations") return mul * ((a.cited_by_count || 0) - (b.cited_by_count || 0));
+      if (key === "links") return mul * ((a.internalDegree || 0) - (b.internalDegree || 0));
+      // year
+      return mul * ((a.year || 0) - (b.year || 0));
+    });
+    return nodes;
+  }
+
+  function showNodeOnMap(n) {
+    setViewMode("map");
+    setHighlightId(n.id);
+    selectNode(n);
+    requestAnimationFrame(() => {
+      setTimeout(() => panToNode(n), 50);
+    });
+  }
 
   useEffect(() => {
     const sim = d3
@@ -540,6 +698,7 @@ export default function App() {
           ? reconstructAbstract(work.abstract_inverted_index)
           : undefined,
         kind,
+        tagId: paperTags[id] || null,
         x: dimsRef.current.w / 2 + (Math.random() - 0.5) * 40,
         y: dimsRef.current.h / 2 + (Math.random() - 0.5) * 40,
       };
@@ -773,6 +932,7 @@ export default function App() {
 
       nodes.forEach((n) => {
         n.internalDegree = neighborSets.get(n.id).size;
+        n.tagId = paperTags[n.id] || null;
       });
 
       const forward = new Set(links.map((l) => `${l.source}->${l.target}`));
@@ -917,6 +1077,15 @@ export default function App() {
       const result = await res.json();
       if (result.successful && Object.keys(result.successful).length > 0) {
         if (full.doi) zoteroDoisRef.current.add(full.doi.toLowerCase());
+        // Convert discovery outline → filled collection point on the map
+        const mapNode = nodesRef.current.find((n) => n.id === node.id);
+        if (mapNode && mapNode.kind === "discovery") {
+          mapNode.kind = "collection";
+          if (full.doi) mapNode.doi = full.doi;
+        }
+        if (selected && selected.id === node.id) {
+          setSelected({ ...mapNode, kind: "collection" });
+        }
         setZoteroMsg(`Added "${full.label.slice(0, 40)}…" to Zotero.`);
         setTick((t) => t + 1);
       } else {
@@ -929,6 +1098,92 @@ export default function App() {
       setAddingId(null);
       setTimeout(() => setZoteroMsg(""), 5000);
     }
+  }
+
+  // ---------- share via file export/import (no backend needed) ----------
+  function exportMap() {
+    const payload = {
+      mode: mapMode,
+      tags,
+      paperTags,
+      nodes: nodesRef.current.map(
+        ({ id, label, year, cited_by_count, kind, doi, referenced_works, cited_by_api_url, internalDegree, tagId }) => ({
+          id,
+          label,
+          year,
+          cited_by_count,
+          kind,
+          doi,
+          referenced_works,
+          cited_by_api_url,
+          internalDegree,
+          tagId: tagId || null,
+        })
+      ),
+      links: linksRef.current.map((l) => ({
+        source: l.source.id || l.source,
+        target: l.target.id || l.target,
+        mutual: !!l.mutual,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `litmap-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSavedMsg("Map exported as JSON file.");
+    setTimeout(() => setSavedMsg(""), 4000);
+  }
+
+  function importMap(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        const mode =
+          data.mode === "collection" ||
+          data.nodes?.some((n) => n.kind === "collection" || n.kind === "discovery")
+            ? "collection"
+            : "explore";
+        nodesRef.current = data.nodes.map((n) => ({
+          ...n,
+          tagId: n.tagId || (data.paperTags && data.paperTags[n.id]) || null,
+          x: dimsRef.current.w / 2 + (Math.random() - 0.5) * 100,
+          y: dimsRef.current.h / 2 + (Math.random() - 0.5) * 100,
+        }));
+        linksRef.current = data.links || [];
+        if (Array.isArray(data.tags)) setTags(data.tags);
+        if (data.paperTags && typeof data.paperTags === "object") {
+          setPaperTags(data.paperTags);
+        } else {
+          const fromNodes = {};
+          nodesRef.current.forEach((n) => {
+            if (n.tagId) fromNodes[n.id] = n.tagId;
+          });
+          if (Object.keys(fromNodes).length) setPaperTags((prev) => ({ ...prev, ...fromNodes }));
+        }
+        setMapMode(mode);
+        if (mode === "collection") {
+          if (simRef.current) simRef.current.stop();
+          layoutCollectionMap();
+        } else {
+          axisRef.current = null;
+          restart(1);
+        }
+        setSelected(nodesRef.current.find((n) => n.kind === "seed") || null);
+        setTick((t) => t + 1);
+        setSavedMsg("Map imported.");
+      } catch (err) {
+        setError("Invalid map file.");
+      }
+      setTimeout(() => setSavedMsg(""), 4000);
+    };
+    reader.readAsText(file);
+    e.target.value = "";
   }
 
   // ---------- drag (explore mode only) ----------
@@ -980,7 +1235,7 @@ export default function App() {
     >
       <div style={{ padding: "20px 24px 12px", borderBottom: "1px solid #1E2A42" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <span style={{ fontSize: 22, letterSpacing: 0.5 }}>RefMap - Free Citation Explorer</span>
+          <span style={{ fontSize: 22, letterSpacing: 0.5 }}>RefMap — Free Citation Explorer</span>
           <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#7C8AA3" }}>
             Powered by OpenAlex + Zotero
           </span>
@@ -1025,10 +1280,64 @@ export default function App() {
           <button onClick={checkForUpdates} style={{ ...btnStyle(), flexShrink: 0 }} title="Check for new citing articles">
             <RefreshCw size={14} /> Monitor
           </button>
+          <button onClick={exportMap} style={{ ...btnStyle(), flexShrink: 0 }} title="Export map as JSON">
+            <Download size={14} /> Export
+          </button>
+          <button onClick={() => fileInputRef.current.click()} style={{ ...btnStyle(), flexShrink: 0 }} title="Import map from JSON">
+            <Upload size={14} /> Import
+          </button>
+          <input ref={fileInputRef} type="file" accept="application/json" onChange={importMap} style={{ display: "none" }} />
+          <div
+            style={{
+              display: "flex",
+              flexShrink: 0,
+              border: "1px solid #2c3b5a",
+              borderRadius: 6,
+              overflow: "hidden",
+            }}
+          >
+            <button
+              onClick={() => setViewMode("map")}
+              style={{
+                ...btnStyle(),
+                border: "none",
+                borderRadius: 0,
+                background: viewMode === "map" ? "#24314C" : "#1a2740",
+              }}
+              title="Map view"
+            >
+              <MapIcon size={14} /> Map
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              style={{
+                ...btnStyle(),
+                border: "none",
+                borderRadius: 0,
+                borderLeft: "1px solid #2c3b5a",
+                background: viewMode === "list" ? "#24314C" : "#1a2740",
+              }}
+              title="List view"
+            >
+              <List size={14} /> List
+            </button>
+          </div>
+          <button
+            onClick={() => setShowTagsPanel((s) => !s)}
+            style={{
+              ...btnStyle(),
+              flexShrink: 0,
+              background: showTagsPanel ? "#24314C" : "#1a2740",
+            }}
+            title="Manage colored tags"
+          >
+            <Tag size={14} /> Tags
+          </button>
           <button
             onClick={() => setShowZoteroPanel((s) => !s)}
             style={{
               ...btnStyle(),
+              flexShrink: 0,
               background: zoteroConnected ? "#1f3a30" : "#1a2740",
               borderColor: zoteroConnected ? "#2f5a45" : "#2c3b5a",
             }}
@@ -1068,6 +1377,81 @@ export default function App() {
             </>
           )}
         </div>
+
+        {showTagsPanel && (
+          <div
+            style={{
+              marginTop: 10,
+              background: "#121B2E",
+              border: "1px solid #24314C",
+              borderRadius: 8,
+              padding: 12,
+              fontFamily: "ui-sans-serif, system-ui",
+              fontSize: 12,
+            }}
+          >
+            <div style={{ color: "#7C8AA3", marginBottom: 8 }}>
+              Create tags with a name and color, then assign them to papers in the sidebar. Tagged papers use that color on the map.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+              <input
+                value={newTagName}
+                onChange={(e) => setNewTagName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && createTag()}
+                placeholder="Tag name"
+                style={{ ...inputStyle(), width: 160 }}
+              />
+              <input
+                type="color"
+                value={newTagColor}
+                onChange={(e) => setNewTagColor(e.target.value)}
+                title="Tag color"
+                style={{ width: 36, height: 30, border: "1px solid #24314C", borderRadius: 4, background: "transparent", cursor: "pointer", padding: 0 }}
+              />
+              <div style={{ display: "flex", gap: 4 }}>
+                {TAG_PALETTE.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setNewTagColor(c)}
+                    title={c}
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: "50%",
+                      background: c,
+                      border: newTagColor === c ? "2px solid #fff" : "1px solid #24314C",
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                  />
+                ))}
+              </div>
+              <button onClick={createTag} style={btnStyle()}>
+                <Plus size={14} /> Add tag
+              </button>
+            </div>
+            {tags.length === 0 ? (
+              <div style={{ color: "#7C8AA3" }}>No tags yet.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {tags.map((t) => (
+                  <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ width: 12, height: 12, borderRadius: "50%", background: t.color, display: "inline-block", flexShrink: 0 }} />
+                    <span style={{ flex: 1, color: "#E8E6DE" }}>{t.name}</span>
+                    <button
+                      onClick={() => deleteTag(t.id)}
+                      style={{ ...iconBtnStyle(), width: 26, height: 26 }}
+                      title={`Delete tag "${t.name}"`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {showZoteroPanel && (
           <div
@@ -1128,7 +1512,16 @@ export default function App() {
       </div>
 
       <div style={{ display: "flex", flex: 1, minHeight: mapHeight + 12 }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        {/* Map view (kept mounted so zoom state persists) */}
+        <div
+          style={{
+            position: "relative",
+            flex: 1,
+            minWidth: 0,
+            display: viewMode === "map" ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
           <svg
             ref={svgRef}
             width="100%"
@@ -1258,6 +1651,7 @@ export default function App() {
                 if (mapMode === "collection" && !showDiscovery && n.kind === "discovery") return null;
                 const isHighlight = highlightId === n.id;
                 const dimmed = highlightId && !isHighlight;
+                const paint = nodePaint(n, tags);
                 return (
                 <g
                   key={n.id}
@@ -1281,15 +1675,19 @@ export default function App() {
                   )}
                   <circle
                     r={nodeRadius(n)}
-                    fill={colorFor(n.kind)}
+                    fill={paint.fill}
                     stroke={
-                      isHighlight
+                      isHighlight || (selected && selected.id === n.id)
                         ? "#FFD166"
-                        : selected && selected.id === n.id
-                          ? "#FFFFFF"
-                          : "#0B1220"
+                        : paint.stroke
                     }
-                    strokeWidth={(isHighlight || (selected && selected.id === n.id) ? 2.5 : 1) / viewTransform.k}
+                    strokeWidth={
+                      (isHighlight || (selected && selected.id === n.id)
+                        ? 2.5
+                        : paint.outline
+                          ? 1.8
+                          : 1) / viewTransform.k
+                    }
                     opacity={dimmed ? 0.18 : 0.92}
                   />
                   {mapMode !== "collection" && n.doi && zoteroDoisRef.current.has(n.doi.toLowerCase()) && (
@@ -1404,10 +1802,11 @@ export default function App() {
                       ...iconBtnStyle(),
                       fontSize: 10,
                       padding: "0 8px",
-                      background: showDiscovery ? "#1f3a30" : "#1a2740",
-                      borderColor: showDiscovery ? "#2f5a45" : "#2c3b5a",
-                      color: showDiscovery ? "#3DCF7A" : "#E8E6DE",
+                      background: showDiscovery ? "#1a2740" : "#121820",
+                      borderColor: "#2c3b5a",
+                      color: "#E8E6DE",
                       minWidth: 64,
+                      opacity: showDiscovery ? 1 : 0.7,
                     }}
                     title={showDiscovery ? "Hide discovery papers" : "Show discovery papers"}
                   >
@@ -1432,13 +1831,172 @@ export default function App() {
             <div style={{ fontSize: 10, color: "#7C8AA3", textAlign: "right" }}>
               {mapMode === "collection" ? (
                 <>
-                  <span style={{ color: "#E05353" }}>●</span> collection{" "}
-                  <span style={{ color: "#3DCF7A" }}>●</span> discovery · scroll to zoom
+                  <span style={{ color: "#E8E6DE" }}>●</span> in collection{" "}
+                  <span style={{ color: "#E8E6DE" }}>○</span> discovery
+                  {tags.length > 0 && " · tags tint nodes"} · scroll to zoom
                 </>
               ) : (
                 <>Scroll to zoom · drag background to pan</>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* List view */}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: viewMode === "list" ? "flex" : "none",
+            flexDirection: "column",
+            background: "#0B1220",
+            borderRight: "1px solid #1E2A42",
+            fontFamily: "ui-sans-serif, system-ui",
+          }}
+        >
+          <div
+            style={{
+              padding: "12px 14px",
+              borderBottom: "1px solid #1E2A42",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <input
+              value={listQuery}
+              onChange={(e) => setListQuery(e.target.value)}
+              placeholder="Filter by title, DOI, year…"
+              style={{ ...inputStyle(), flex: "1 1 180px", minWidth: 140 }}
+            />
+            <select
+              value={listScope}
+              onChange={(e) => setListScope(e.target.value)}
+              style={{ ...inputStyle(), width: "auto", cursor: "pointer" }}
+              title="Collection scope"
+            >
+              <option value="all">All papers</option>
+              <option value="collection">In collection</option>
+              <option value="discovery">Out of collection</option>
+            </select>
+            <select
+              value={listTagFilter}
+              onChange={(e) => setListTagFilter(e.target.value)}
+              style={{ ...inputStyle(), width: "auto", cursor: "pointer" }}
+              title="Tag filter"
+            >
+              <option value="all">All tags</option>
+              <option value="none">Untagged</option>
+              {tags.map((t) => (
+                <option key={t.id} value={t.id}>
+                  Tag: {t.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={listSort}
+              onChange={(e) => setListSort(e.target.value)}
+              style={{ ...inputStyle(), width: "auto", cursor: "pointer" }}
+              title="Sort"
+            >
+              <option value="year-desc">Year ↓</option>
+              <option value="year-asc">Year ↑</option>
+              <option value="citations-desc">Citations ↓</option>
+              <option value="citations-asc">Citations ↑</option>
+              <option value="links-desc">Links ↓</option>
+              <option value="links-asc">Links ↑</option>
+              <option value="title-asc">Title A–Z</option>
+              <option value="title-desc">Title Z–A</option>
+            </select>
+          </div>
+          <div style={{ padding: "8px 14px", fontSize: 11, color: "#7C8AA3", borderBottom: "1px solid #1E2A42" }}>
+            {(() => {
+              const filtered = getFilteredListNodes();
+              return `${filtered.length} of ${nodesRef.current.length} papers`;
+            })()}
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", minHeight: mapHeight - 80 }}>
+            {nodesRef.current.length === 0 ? (
+              <div style={{ padding: 24, color: "#7C8AA3", fontSize: 13 }}>
+                No papers on the map yet. Create a map from a Zotero collection first.
+              </div>
+            ) : (
+              getFilteredListNodes().map((n) => {
+                const tag = n.tagId ? tags.find((t) => t.id === n.tagId) : null;
+                const paint = nodePaint(n, tags);
+                const isSel = selected && selected.id === n.id;
+                return (
+                  <div
+                    key={n.id}
+                    onClick={() => {
+                      setHighlightId(n.id);
+                      selectNode(n);
+                    }}
+                    style={{
+                      padding: "10px 14px",
+                      borderBottom: "1px solid #1E2A42",
+                      cursor: "pointer",
+                      background: isSel ? "#1a2740" : "transparent",
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "flex-start",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isSel) e.currentTarget.style.background = "#121B2E";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = isSel ? "#1a2740" : "transparent";
+                    }}
+                  >
+                    <span
+                      title={n.kind === "discovery" ? "Out of collection" : n.kind === "collection" ? "In collection" : n.kind}
+                      style={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: "50%",
+                        marginTop: 3,
+                        flexShrink: 0,
+                        background: paint.outline ? "transparent" : paint.color,
+                        border: `2px solid ${paint.stroke}`,
+                        boxSizing: "border-box",
+                      }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: "#E8E6DE", fontSize: 13, lineHeight: 1.35 }}>{n.label}</div>
+                      <div style={{ color: "#7C8AA3", fontSize: 11, marginTop: 3 }}>
+                        {n.year || "—"} · {n.cited_by_count || 0} citations
+                        {(n.kind === "collection" || n.kind === "discovery") && (
+                          <> · {n.internalDegree || 0} links</>
+                        )}
+                        {" · "}
+                        {n.kind === "collection"
+                          ? "in collection"
+                          : n.kind === "discovery"
+                            ? "out of collection"
+                            : n.kind}
+                        {tag && (
+                          <>
+                            {" · "}
+                            <span style={{ color: tag.color }}>{tag.name}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        showNodeOnMap(n);
+                      }}
+                      style={{ ...iconBtnStyle(), width: 28, height: 28, flexShrink: 0 }}
+                      title="Show on map"
+                    >
+                      <MapIcon size={12} />
+                    </button>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -1453,7 +2011,14 @@ export default function App() {
           {selected && (
             <div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 10, letterSpacing: 1, color: colorFor(selected.kind), textTransform: "uppercase" }}>
+                <span
+                  style={{
+                    fontSize: 10,
+                    letterSpacing: 1,
+                    color: nodePaint(selected, tags).color,
+                    textTransform: "uppercase",
+                  }}
+                >
                   {selected.kind === "seed"
                     ? "Seed"
                     : selected.kind === "citation"
@@ -1494,6 +2059,43 @@ export default function App() {
 
               <div style={{ marginTop: 14 }}>
                 <div style={{ fontSize: 10, letterSpacing: 1, color: "#7C8AA3", textTransform: "uppercase", marginBottom: 6 }}>
+                  Tag
+                </div>
+                <select
+                  value={selected.tagId || ""}
+                  onChange={(e) => assignTagToSelected(e.target.value || null)}
+                  style={{ ...inputStyle(), width: "100%", cursor: "pointer" }}
+                >
+                  <option value="">No tag</option>
+                  {tags.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                {tags.length === 0 && (
+                  <div style={{ marginTop: 6, color: "#7C8AA3", fontSize: 11 }}>
+                    Create tags via the Tags button above.
+                  </div>
+                )}
+                {selected.tagId && (
+                  <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#9AA8C0" }}>
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: "50%",
+                        background: tags.find((t) => t.id === selected.tagId)?.color || DEFAULT_NODE_COLOR,
+                        display: "inline-block",
+                      }}
+                    />
+                    {tags.find((t) => t.id === selected.tagId)?.name}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 10, letterSpacing: 1, color: "#7C8AA3", textTransform: "uppercase", marginBottom: 6 }}>
                   Abstract
                 </div>
                 {abstractLoading && selected.abstract == null ? (
@@ -1510,6 +2112,15 @@ export default function App() {
               {mapMode !== "collection" && (
                 <button onClick={() => expandNode(selected)} style={{ ...btnStyle(), marginTop: 14, width: "100%", justifyContent: "center" }}>
                   Expand network
+                </button>
+              )}
+
+              {viewMode === "list" && (
+                <button
+                  onClick={() => showNodeOnMap(selected)}
+                  style={{ ...btnStyle(), marginTop: 14, width: "100%", justifyContent: "center" }}
+                >
+                  <MapIcon size={14} /> Show on map
                 </button>
               )}
 

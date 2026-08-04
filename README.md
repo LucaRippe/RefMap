@@ -1,10 +1,9 @@
-# RefMap - Free Citation Explorer
+# RefMap — Free Citation Explorer
 
 A free literature discovery tool in the style of Litmaps: searches
 [OpenAlex](https://openalex.org) for papers, visualizes the citation network,
-and connects to your [Zotero](https://www.zotero.org) library.
-
-Powered by OpenAlex + Zotero.
+and connects to your [Zotero](https://www.zotero.org) library. Powered by
+OpenAlex + Zotero.
 
 ## Setup
 
@@ -37,18 +36,19 @@ filled in, the app connects to Zotero on startup.
 - **Double-click**: expand the network around that node
 - **Drag**: freely reposition nodes
 - **Monitor**: check again for new citing articles
+- **Export/Import**: save/share the map as a JSON file
 - **Zotero collection**: after connecting, pick a collection (or main
   library) from the toolbar dropdown — used for DOI sync and new papers
 - **Create Map**: builds a scatter map of the selected collection
-  (X = publication year, Y = total citations). **Red** nodes are papers
-  already in the collection; **green** discovery nodes are outside papers
-  that cite or are cited by the collection. Node size reflects network
-  degree on the map. White arrows show citation direction. Discovery can
-  be toggled in the view controls. Papers without a DOI / OpenAlex match
-  are skipped.
-- **Zoom / view**: scroll to zoom, drag the background to pan; use the
-  controls for zoom in/out, fit, reset, toggle links/labels, and log-scale Y.
-  Selecting a paper loads its abstract in the sidebar.
+  (X = publication year, Y = total citations). **Filled white** nodes are
+  papers in the collection; **white outlines** are discovery papers outside
+  it that cite or are cited by the collection. Custom **tags** (name + color)
+  can be created and assigned to papers — tagged papers use that color on
+  the map. Node size reflects network degree. White arrows show citation
+  direction. Discovery can be toggled in the view controls.
+- **Map / List**: switch between the scatter map and a filterable list
+  (scope: in/out of collection, tags, title search, sort by year/citations/links).
+  Click a row for details; use the map icon to jump to that paper on the map.
 - **Add to Zotero**: creates the paper (title, authors, DOI, abstract)
   as a `journalArticle` in the selected collection
 
