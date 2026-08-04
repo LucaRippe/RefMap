@@ -1,4 +1,4 @@
-# RefMap — Free Citation Explorer
+# RefMap - Free Citation Explorer
 
 A free literature discovery tool in the style of Litmaps: searches
 [OpenAlex](https://openalex.org) for papers, visualizes the citation network,
