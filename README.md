@@ -5,6 +5,16 @@ A free literature discovery tool in the style of Litmaps: searches
 and connects to your [Zotero](https://www.zotero.org) library. Powered by
 OpenAlex + Zotero.
 
+## Screenshots
+
+### Map view
+
+![RefMap map view](screenshots/map_example.png)
+
+### List view
+
+![RefMap list view](screenshots/list_example.png)
+
 ## Setup
 
 ```bash
