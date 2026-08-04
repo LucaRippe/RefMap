@@ -36,7 +36,9 @@ filled in, the app connects to Zotero on startup.
 - **Double-click**: expand the network around that node
 - **Drag**: freely reposition nodes
 - **Monitor**: check again for new citing articles
-- **Export/Import**: save/share the map as a JSON file
+- **Export/Import**: save/load a full project JSON (nodes, links, tags,
+  paper–tag assignments, map/list view options, zoom, height, highlight,
+  selected collection metadata). Zotero API credentials are never included.
 - **Zotero collection**: after connecting, pick a collection (or main
   library) from the toolbar dropdown — used for DOI sync and new papers
 - **Create Map**: builds a scatter map of the selected collection

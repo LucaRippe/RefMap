@@ -431,7 +431,7 @@ export default function App() {
     const svg = d3.select(svgRef.current);
     const zoom = d3
       .zoom()
-      .scaleExtent([0.25, 8])
+      .scaleExtent([1, 8])
       .filter((event) => {
         // Allow wheel zoom always; pan with left-drag on background (not on nodes)
         if (event.type === "wheel") return true;
@@ -444,12 +444,51 @@ export default function App() {
         transformRef.current = event.transform;
         setViewTransform(event.transform);
       });
+    configureZoomExtents(zoom);
     svg.call(zoom);
+    // Prevent browser page scroll/zoom stealing trackpad gestures on the map
+    svg.on("wheel.zoom-block", (event) => event.preventDefault());
     zoomBehaviorRef.current = zoom;
     return () => {
       svg.on(".zoom", null);
+      svg.on("wheel.zoom-block", null);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function viewportExtent() {
+    const w = dimsRef.current.w || 900;
+    const h = dimsRef.current.h || mapHeight;
+    return [
+      [0, 0],
+      [w, h],
+    ];
+  }
+
+  function configureZoomExtents(zoom = zoomBehaviorRef.current) {
+    if (!zoom) return;
+    const ext = viewportExtent();
+    zoom.extent(ext).translateExtent(ext).scaleExtent([1, 8]);
+  }
+
+  function clampZoomTransform(t) {
+    const zoom = zoomBehaviorRef.current;
+    if (!zoom || !t) return t || d3.zoomIdentity;
+    const ext = viewportExtent();
+    return zoom.constrain()(t, ext, ext);
+  }
+
+  function applyZoomTransform(t, { animate = false, duration = 250 } = {}) {
+    if (!svgRef.current || !zoomBehaviorRef.current) return;
+    configureZoomExtents();
+    const next = clampZoomTransform(t);
+    const sel = d3.select(svgRef.current);
+    if (animate) {
+      sel.transition().duration(duration).call(zoomBehaviorRef.current.transform, next);
+    } else {
+      sel.call(zoomBehaviorRef.current.transform, next);
+    }
+  }
 
   useEffect(() => {
     function measure() {
@@ -457,12 +496,14 @@ export default function App() {
       const w = svgRef.current.clientWidth || 900;
       dimsRef.current.w = w;
       dimsRef.current.h = mapHeight;
+      configureZoomExtents();
+      // Keep current view clamped to the new viewport — no empty margins
+      applyZoomTransform(transformRef.current);
       if (mapMode === "collection" && nodesRef.current.length) {
         layoutCollectionMap();
         setTick((t) => t + 1);
       } else if (simRef.current) {
         simRef.current.force("center", d3.forceCenter(w / 2, mapHeight / 2));
-        // Nudge explore layout when height changes
         if (nodesRef.current.length) restart(0.4);
       }
     }
@@ -503,7 +544,7 @@ export default function App() {
     const h = dimsRef.current.h;
     const k = Math.max(transformRef.current.k, 1.25);
     const t = d3.zoomIdentity.translate(w / 2 - n.x * k, h / 2 - n.y * k).scale(k);
-    d3.select(svgRef.current).transition().duration(400).call(zoomBehaviorRef.current.transform, t);
+    applyZoomTransform(t, { animate: true, duration: 400 });
   }
 
   async function focusSearchResult(work) {
@@ -599,12 +640,12 @@ export default function App() {
   }
 
   function resetZoom() {
-    if (!svgRef.current || !zoomBehaviorRef.current) return;
-    d3.select(svgRef.current).transition().duration(250).call(zoomBehaviorRef.current.transform, d3.zoomIdentity);
+    applyZoomTransform(d3.zoomIdentity, { animate: true, duration: 250 });
   }
 
   function zoomBy(factor) {
     if (!svgRef.current || !zoomBehaviorRef.current) return;
+    configureZoomExtents();
     d3.select(svgRef.current).transition().duration(200).call(zoomBehaviorRef.current.scaleBy, factor);
   }
 
@@ -625,11 +666,11 @@ export default function App() {
     const maxY = d3.max(ys) + pad;
     const bw = Math.max(maxX - minX, 1);
     const bh = Math.max(maxY - minY, 1);
-    const scale = Math.min(8, Math.max(0.25, 0.9 * Math.min(w / bw, h / bh)));
+    // Never zoom out below 1× — keeps the viewport filled (no empty margins)
+    const scale = Math.min(8, Math.max(1, 0.9 * Math.min(w / bw, h / bh)));
     const tx = w / 2 - (scale * (minX + maxX)) / 2;
     const ty = h / 2 - (scale * (minY + maxY)) / 2;
-    const t = d3.zoomIdentity.translate(tx, ty).scale(scale);
-    d3.select(svgRef.current).transition().duration(300).call(zoomBehaviorRef.current.transform, t);
+    applyZoomTransform(d3.zoomIdentity.translate(tx, ty).scale(scale), { animate: true, duration: 300 });
   }
 
   function toggleLogScale() {
@@ -1100,40 +1141,75 @@ export default function App() {
     }
   }
 
-  // ---------- share via file export/import (no backend needed) ----------
+  // ---------- full project snapshot via JSON export/import ----------
   function exportMap() {
+    const collectionName =
+      selectedCollectionKey === ""
+        ? ""
+        : zoteroCollections.find((c) => c.key === selectedCollectionKey)?.name || "";
     const payload = {
+      version: 2,
+      app: "refmap",
+      savedAt: new Date().toISOString(),
       mode: mapMode,
-      tags,
-      paperTags,
-      nodes: nodesRef.current.map(
-        ({ id, label, year, cited_by_count, kind, doi, referenced_works, cited_by_api_url, internalDegree, tagId }) => ({
-          id,
-          label,
-          year,
-          cited_by_count,
-          kind,
-          doi,
-          referenced_works,
-          cited_by_api_url,
-          internalDegree,
-          tagId: tagId || null,
-        })
-      ),
+      nodes: nodesRef.current.map((n) => ({
+        id: n.id,
+        label: n.label,
+        year: n.year,
+        cited_by_count: n.cited_by_count,
+        kind: n.kind,
+        doi: n.doi || null,
+        referenced_works: n.referenced_works || [],
+        cited_by_api_url: n.cited_by_api_url || null,
+        authorships: n.authorships || [],
+        primary_location: n.primary_location || null,
+        abstract: n.abstract != null ? n.abstract : undefined,
+        internalDegree: n.internalDegree || 0,
+        tagId: n.tagId || null,
+        x: n.x,
+        y: n.y,
+      })),
       links: linksRef.current.map((l) => ({
         source: l.source.id || l.source,
         target: l.target.id || l.target,
         mutual: !!l.mutual,
       })),
+      tags,
+      paperTags,
+      ui: {
+        viewMode,
+        listScope,
+        listTagFilter,
+        listSort,
+        listQuery,
+        showLinks,
+        showLabels,
+        showDiscovery,
+        logScale,
+        mapHeight: Math.round(mapHeight),
+        viewTransform: {
+          k: viewTransform.k,
+          x: viewTransform.x,
+          y: viewTransform.y,
+        },
+        highlightId,
+        selectedId: selected?.id || null,
+      },
+      zotero: {
+        selectedCollectionKey,
+        collectionName,
+        dois: [...zoteroDoisRef.current],
+      },
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `litmap-${Date.now()}.json`;
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    a.download = `refmap-${stamp}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    setSavedMsg("Map exported as JSON file.");
+    setSavedMsg("Project exported as JSON (map, tags, view state).");
     setTimeout(() => setSavedMsg(""), 4000);
   }
 
@@ -1144,41 +1220,131 @@ export default function App() {
     reader.onload = (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
+        if (!data || !Array.isArray(data.nodes)) {
+          throw new Error("Missing nodes");
+        }
+
         const mode =
           data.mode === "collection" ||
-          data.nodes?.some((n) => n.kind === "collection" || n.kind === "discovery")
+          data.nodes.some((n) => n.kind === "collection" || n.kind === "discovery")
             ? "collection"
-            : "explore";
-        nodesRef.current = data.nodes.map((n) => ({
-          ...n,
-          tagId: n.tagId || (data.paperTags && data.paperTags[n.id]) || null,
-          x: dimsRef.current.w / 2 + (Math.random() - 0.5) * 100,
-          y: dimsRef.current.h / 2 + (Math.random() - 0.5) * 100,
-        }));
-        linksRef.current = data.links || [];
+            : data.mode === "explore"
+              ? "explore"
+              : "explore";
+
+        // Tags
         if (Array.isArray(data.tags)) setTags(data.tags);
+        let nextPaperTags = {};
         if (data.paperTags && typeof data.paperTags === "object") {
+          nextPaperTags = data.paperTags;
           setPaperTags(data.paperTags);
         } else {
-          const fromNodes = {};
-          nodesRef.current.forEach((n) => {
-            if (n.tagId) fromNodes[n.id] = n.tagId;
+          data.nodes.forEach((n) => {
+            if (n.tagId) nextPaperTags[n.id] = n.tagId;
           });
-          if (Object.keys(fromNodes).length) setPaperTags((prev) => ({ ...prev, ...fromNodes }));
+          if (Object.keys(nextPaperTags).length) setPaperTags(nextPaperTags);
         }
+
+        // Graph
+        nodesRef.current = data.nodes.map((n) => ({
+          ...n,
+          tagId: n.tagId || nextPaperTags[n.id] || null,
+          referenced_works: n.referenced_works || [],
+          authorships: n.authorships || [],
+          x: n.x != null ? n.x : dimsRef.current.w / 2 + (Math.random() - 0.5) * 100,
+          y: n.y != null ? n.y : dimsRef.current.h / 2 + (Math.random() - 0.5) * 100,
+        }));
+        linksRef.current = (data.links || []).map((l) => ({
+          source: l.source,
+          target: l.target,
+          mutual: !!l.mutual,
+        }));
+
+        // UI state
+        const ui = data.ui || {};
+        if (ui.viewMode === "map" || ui.viewMode === "list") setViewMode(ui.viewMode);
+        if (ui.listScope) setListScope(ui.listScope);
+        if (ui.listTagFilter != null) setListTagFilter(ui.listTagFilter);
+        if (ui.listSort) setListSort(ui.listSort);
+        if (typeof ui.listQuery === "string") setListQuery(ui.listQuery);
+        if (typeof ui.showLinks === "boolean") setShowLinks(ui.showLinks);
+        if (typeof ui.showLabels === "boolean") setShowLabels(ui.showLabels);
+        if (typeof ui.showDiscovery === "boolean") setShowDiscovery(ui.showDiscovery);
+        if (typeof ui.logScale === "boolean") {
+          logScaleRef.current = ui.logScale;
+          setLogScale(ui.logScale);
+        }
+        if (typeof ui.mapHeight === "number") {
+          setMapHeight(Math.round(Math.min(MAP_HEIGHT_MAX, Math.max(MAP_HEIGHT_MIN, ui.mapHeight))));
+        }
+        setHighlightId(ui.highlightId || null);
+
+        // Zotero metadata (no secrets)
+        if (data.zotero) {
+          if (Array.isArray(data.zotero.dois)) {
+            zoteroDoisRef.current = new Set(
+              data.zotero.dois.map((d) => String(d).toLowerCase()).filter(Boolean)
+            );
+          }
+          if (typeof data.zotero.selectedCollectionKey === "string") {
+            setSelectedCollectionKey(data.zotero.selectedCollectionKey);
+          }
+        } else {
+          zoteroDoisRef.current = new Set(
+            nodesRef.current.filter((n) => n.kind === "collection" && n.doi).map((n) => n.doi.toLowerCase())
+          );
+        }
+
         setMapMode(mode);
+        setSearchResults([]);
+        setQuery("");
+        setError(null);
+
         if (mode === "collection") {
           if (simRef.current) simRef.current.stop();
-          layoutCollectionMap();
+          // Keep saved positions if present; only rebuild scales/axes
+          if (nodesRef.current.every((n) => n.x == null || n.y == null)) {
+            layoutCollectionMap();
+          } else {
+            // Recompute axes from saved positions' year/cite domains
+            layoutCollectionMap();
+            // Restore exact saved coordinates after layout
+            const byId = new Map(data.nodes.map((n) => [n.id, n]));
+            nodesRef.current.forEach((n) => {
+              const saved = byId.get(n.id);
+              if (saved && saved.x != null && saved.y != null) {
+                n.x = saved.x;
+                n.y = saved.y;
+                n.fx = n.x;
+                n.fy = n.y;
+              }
+            });
+          }
         } else {
           axisRef.current = null;
           restart(1);
         }
-        setSelected(nodesRef.current.find((n) => n.kind === "seed") || null);
+
+        const selId = ui.selectedId;
+        const sel = selId ? nodesRef.current.find((n) => n.id === selId) : null;
+        setSelected(sel || nodesRef.current.find((n) => n.kind === "seed") || null);
         setTick((t) => t + 1);
-        setSavedMsg("Map imported.");
+
+        // Restore zoom after paint
+        const vt = ui.viewTransform;
+        requestAnimationFrame(() => {
+          if (vt && zoomBehaviorRef.current && svgRef.current && typeof vt.k === "number") {
+            const t = d3.zoomIdentity.translate(vt.x || 0, vt.y || 0).scale(Math.max(1, vt.k));
+            applyZoomTransform(t);
+          } else {
+            resetZoom();
+          }
+        });
+
+        setSavedMsg("Project imported.");
       } catch (err) {
-        setError("Invalid map file.");
+        console.warn(err);
+        setError("Invalid RefMap JSON file.");
       }
       setTimeout(() => setSavedMsg(""), 4000);
     };
@@ -1280,10 +1446,10 @@ export default function App() {
           <button onClick={checkForUpdates} style={{ ...btnStyle(), flexShrink: 0 }} title="Check for new citing articles">
             <RefreshCw size={14} /> Monitor
           </button>
-          <button onClick={exportMap} style={{ ...btnStyle(), flexShrink: 0 }} title="Export map as JSON">
+          <button onClick={exportMap} style={{ ...btnStyle(), flexShrink: 0 }} title="Export full project as JSON">
             <Download size={14} /> Export
           </button>
-          <button onClick={() => fileInputRef.current.click()} style={{ ...btnStyle(), flexShrink: 0 }} title="Import map from JSON">
+          <button onClick={() => fileInputRef.current.click()} style={{ ...btnStyle(), flexShrink: 0 }} title="Import project JSON">
             <Upload size={14} /> Import
           </button>
           <input ref={fileInputRef} type="file" accept="application/json" onChange={importMap} style={{ display: "none" }} />
@@ -1522,6 +1688,110 @@ export default function App() {
             flexDirection: "column",
           }}
         >
+          {/* Map exploration controls */}
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "8px 12px",
+              background: "#121B2E",
+              borderBottom: "1px solid #1E2A42",
+              fontFamily: "ui-sans-serif, system-ui",
+              flex: "0 0 auto",
+            }}
+          >
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+              <button onClick={() => zoomBy(1.3)} style={iconBtnStyle()} title="Zoom in">
+                <ZoomIn size={14} />
+              </button>
+              <button onClick={() => zoomBy(1 / 1.3)} style={iconBtnStyle()} title="Zoom out">
+                <ZoomOut size={14} />
+              </button>
+              <button onClick={fitView} style={iconBtnStyle()} title="Fit to view">
+                <Maximize2 size={14} />
+              </button>
+              <button onClick={resetZoom} style={{ ...iconBtnStyle(), fontSize: 10, padding: "0 8px" }} title="Reset zoom">
+                {Math.round(viewTransform.k * 100)}%
+              </button>
+              <button
+                onClick={fillViewportHeight}
+                style={{ ...iconBtnStyle(), fontSize: 10, padding: "0 8px", minWidth: 48 }}
+                title="Fit map height to viewport"
+              >
+                {Math.round(mapHeight)}px
+              </button>
+              <span style={{ width: 1, height: 20, background: "#2c3b5a", margin: "0 4px" }} />
+              <button
+                onClick={() => setShowLinks((v) => !v)}
+                style={{
+                  ...iconBtnStyle(),
+                  background: showLinks ? "#1a2740" : "#121820",
+                  opacity: showLinks ? 1 : 0.7,
+                }}
+                title={showLinks ? "Hide links" : "Show links"}
+              >
+                {showLinks ? <Eye size={14} /> : <EyeOff size={14} />}
+              </button>
+              <button
+                onClick={() => setShowLabels((v) => !v)}
+                style={{
+                  ...iconBtnStyle(),
+                  background: showLabels ? "#24314C" : "#1a2740",
+                }}
+                title={showLabels ? "Hide labels" : "Show labels"}
+              >
+                <Tag size={14} />
+              </button>
+              {mapMode === "collection" && (
+                <>
+                  <button
+                    onClick={() => setShowDiscovery((v) => !v)}
+                    style={{
+                      ...iconBtnStyle(),
+                      fontSize: 10,
+                      padding: "0 8px",
+                      background: showDiscovery ? "#1a2740" : "#121820",
+                      borderColor: "#2c3b5a",
+                      color: "#E8E6DE",
+                      minWidth: 64,
+                      opacity: showDiscovery ? 1 : 0.7,
+                    }}
+                    title={showDiscovery ? "Hide discovery papers" : "Show discovery papers"}
+                  >
+                    discovery
+                  </button>
+                  <button
+                    onClick={toggleLogScale}
+                    style={{
+                      ...iconBtnStyle(),
+                      fontSize: 10,
+                      padding: "0 8px",
+                      background: logScale ? "#24314C" : "#1a2740",
+                      minWidth: 52,
+                    }}
+                    title="Toggle log scale for citations"
+                  >
+                    {logScale ? "log Y" : "lin Y"}
+                  </button>
+                </>
+              )}
+            </div>
+            <div style={{ fontSize: 10, color: "#7C8AA3", whiteSpace: "nowrap" }}>
+              {mapMode === "collection" ? (
+                <>
+                  <span style={{ color: "#E8E6DE" }}>●</span> in collection{" "}
+                  <span style={{ color: "#E8E6DE" }}>○</span> discovery
+                  {tags.length > 0 && " · tags tint nodes"} · scroll to zoom
+                </>
+              ) : (
+                <>Scroll to zoom · drag background to pan</>
+              )}
+            </div>
+          </div>
+
           <svg
             ref={svgRef}
             width="100%"
@@ -1737,108 +2007,6 @@ export default function App() {
             }}
           >
             <div style={{ width: 36, height: 3, borderRadius: 2, background: "#3A4A68" }} />
-          </div>
-
-          {/* Zoom & view controls */}
-          <div
-            style={{
-              position: "absolute",
-              right: 12,
-              bottom: 22,
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-              fontFamily: "ui-sans-serif, system-ui",
-            }}
-          >
-            <div style={{ display: "flex", gap: 4 }}>
-              <button onClick={() => zoomBy(1.3)} style={iconBtnStyle()} title="Zoom in">
-                <ZoomIn size={14} />
-              </button>
-              <button onClick={() => zoomBy(1 / 1.3)} style={iconBtnStyle()} title="Zoom out">
-                <ZoomOut size={14} />
-              </button>
-              <button onClick={fitView} style={iconBtnStyle()} title="Fit to view">
-                <Maximize2 size={14} />
-              </button>
-              <button onClick={resetZoom} style={{ ...iconBtnStyle(), fontSize: 10, padding: "0 8px" }} title="Reset zoom">
-                {Math.round(viewTransform.k * 100)}%
-              </button>
-              <button
-                onClick={fillViewportHeight}
-                style={{ ...iconBtnStyle(), fontSize: 10, padding: "0 8px", minWidth: 48 }}
-                title="Fit map height to viewport"
-              >
-                {Math.round(mapHeight)}px
-              </button>
-            </div>
-            <div style={{ display: "flex", gap: 4 }}>
-              <button
-                onClick={() => setShowLinks((v) => !v)}
-                style={{
-                  ...iconBtnStyle(),
-                  background: showLinks ? "#1a2740" : "#121820",
-                  opacity: showLinks ? 1 : 0.7,
-                }}
-                title={showLinks ? "Hide links" : "Show links"}
-              >
-                {showLinks ? <Eye size={14} /> : <EyeOff size={14} />}
-              </button>
-              <button
-                onClick={() => setShowLabels((v) => !v)}
-                style={{
-                  ...iconBtnStyle(),
-                  background: showLabels ? "#24314C" : "#1a2740",
-                }}
-                title={showLabels ? "Hide labels" : "Show labels"}
-              >
-                <Tag size={14} />
-              </button>
-              {mapMode === "collection" && (
-                <>
-                  <button
-                    onClick={() => setShowDiscovery((v) => !v)}
-                    style={{
-                      ...iconBtnStyle(),
-                      fontSize: 10,
-                      padding: "0 8px",
-                      background: showDiscovery ? "#1a2740" : "#121820",
-                      borderColor: "#2c3b5a",
-                      color: "#E8E6DE",
-                      minWidth: 64,
-                      opacity: showDiscovery ? 1 : 0.7,
-                    }}
-                    title={showDiscovery ? "Hide discovery papers" : "Show discovery papers"}
-                  >
-                    discovery
-                  </button>
-                  <button
-                    onClick={toggleLogScale}
-                    style={{
-                      ...iconBtnStyle(),
-                      fontSize: 10,
-                      padding: "0 8px",
-                      background: logScale ? "#24314C" : "#1a2740",
-                      minWidth: 52,
-                    }}
-                    title="Toggle log scale for citations"
-                  >
-                    {logScale ? "log Y" : "lin Y"}
-                  </button>
-                </>
-              )}
-            </div>
-            <div style={{ fontSize: 10, color: "#7C8AA3", textAlign: "right" }}>
-              {mapMode === "collection" ? (
-                <>
-                  <span style={{ color: "#E8E6DE" }}>●</span> in collection{" "}
-                  <span style={{ color: "#E8E6DE" }}>○</span> discovery
-                  {tags.length > 0 && " · tags tint nodes"} · scroll to zoom
-                </>
-              ) : (
-                <>Scroll to zoom · drag background to pan</>
-              )}
-            </div>
           </div>
         </div>
 
